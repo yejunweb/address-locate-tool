@@ -181,6 +181,45 @@
                 text-align: center;
                 border: 2px solid rgba(0, 0, 0, 0.2);
             }
+
+            /* 测距信息样式 */
+            .distance-info {
+                margin-top: 15px;
+                padding: 10px;
+                background: #f5f7fa;
+                border-radius: 4px;
+                border-left: 3px solid #409eff;
+            }
+
+            .distance-info p {
+                margin: 5px 0;
+                font-size: 12px;
+                color: #606266;
+            }
+
+            .distance-info p:first-child {
+                margin-top: 0;
+            }
+
+            .distance-info p:last-child {
+                margin-bottom: 0;
+            }
+
+            /* 测距线样式 */
+            .distance-line {
+                stroke: #409eff;
+                stroke-width: 3;
+                stroke-dasharray: 5, 5;
+                fill: none;
+                opacity: 0.8;
+            }
+
+            .distance-point {
+                fill: #409eff;
+                stroke: white;
+                stroke-width: 2;
+                r: 6;
+            }
         </style>
     </head>
     <body>
@@ -225,6 +264,28 @@
                             </el-button>
                             <el-button type="success" @click="loadModelAtCurrentPosition" :loading="modelLoading">
                                 加载3D模型
+                            </el-button>
+                            <el-button
+                                :type="isMeasuring ? 'danger' : 'warning'"
+                                @click="toggleMeasuring"
+                                :icon="isMeasuring ? 'el-icon-close' : 'el-icon-ruler'"
+                            >
+                                {{ isMeasuring ? '结束测距' : '开始测距' }}
+                            </el-button>
+                        </div>
+                        <!-- 测距结果显示 -->
+                        <div v-if="isMeasuring || distancePoints.length > 0" class="distance-info">
+                            <p><strong>测距模式</strong></p>
+                            <p v-if="distancePoints.length === 0">点击地图开始测距</p>
+                            <p v-else-if="distancePoints.length === 1">点击地图添加第二个点</p>
+                            <p v-else>总距离: <strong>{{ totalDistance.toFixed(2) }} 米</strong></p>
+                            <el-button
+                                v-if="distancePoints.length > 0"
+                                size="mini"
+                                type="danger"
+                                @click="clearDistance"
+                            >
+                                清除测距
                             </el-button>
                         </div>
                     </el-form>
@@ -289,6 +350,11 @@
                         baseLayers: {}, // 添加图层组引用
                         pixelToThreeJSRatio: 1, // 1像素 = 1Three.js单位
                         meterToPixelRatio: 1, // 1米 = 多少像素
+                        isMeasuring: false, // 新增测距模式状态
+                        distancePoints: [], // 新增测距点数组
+                        totalDistance: 0, // 新增总距离
+                        distanceMarkers: [], // 新增测距标记点
+                        distanceLines: [], // 新增测距线条
                     }
                 },
                 mounted() {
@@ -314,6 +380,9 @@
                     if (this.map) {
                         this.map.remove()
                     }
+
+                    // 清理测距资源
+                    this.clearDistance()
                 },
                 methods: {
                     // 初始化地图
@@ -835,6 +904,12 @@
 
                         console.log('修正后的坐标:', { lng, lat })
 
+                        // 如果在测距模式下，处理测距点击
+                        if (this.isMeasuring) {
+                            this.handleDistanceClick(lng, lat)
+                            return
+                        }
+
                         // 更新表单中的经纬度
                         this.form.lng = lng.toFixed(6)
                         this.form.lat = lat.toFixed(6)
@@ -1037,6 +1112,139 @@
                             this.camera.updateProjectionMatrix()
                             this.renderer.setSize(window.innerWidth, window.innerHeight)
                         }
+                    },
+
+                    // 切换测距模式
+                    toggleMeasuring() {
+                        this.isMeasuring = !this.isMeasuring
+                        if (!this.isMeasuring) {
+                            this.clearDistance()
+                        }
+                        this.$message({
+                            message: this.isMeasuring ? '已进入测距模式，点击地图添加测距点' : '已退出测距模式',
+                            type: this.isMeasuring ? 'success' : 'info',
+                            duration: 2000,
+                        })
+                    },
+
+                    // 处理测距点击
+                    handleDistanceClick(lng, lat) {
+                        // 添加测距点
+                        this.distancePoints.push({ lng, lat })
+
+                        // 创建测距标记点
+                        const marker = L.circleMarker([lat, lng], {
+                            radius: 6,
+                            fillColor: '#409eff',
+                            color: 'white',
+                            weight: 2,
+                            opacity: 1,
+                            fillOpacity: 0.8,
+                        }).addTo(this.map)
+
+                        // 添加标记点信息
+                        marker.bindPopup(`测距点 ${this.distancePoints.length}: ${lng.toFixed(6)}, ${lat.toFixed(6)}`)
+
+                        this.distanceMarkers.push(marker)
+
+                        // 如果有多个点，计算距离并绘制线条
+                        if (this.distancePoints.length >= 2) {
+                            this.calculateAndDrawDistance()
+                        }
+
+                        this.$message({
+                            message: `已添加测距点 ${this.distancePoints.length}`,
+                            type: 'success',
+                            duration: 1500,
+                        })
+                    },
+
+                    // 计算距离并绘制线条
+                    calculateAndDrawDistance() {
+                        // 清除之前的线条
+                        this.clearDistanceLines()
+
+                        let totalDistance = 0
+
+                        // 计算所有点之间的距离
+                        for (let i = 0; i < this.distancePoints.length - 1; i++) {
+                            const point1 = this.distancePoints[i]
+                            const point2 = this.distancePoints[i + 1]
+
+                            // 使用turf.js计算距离
+                            const from = turf.point([point1.lng, point1.lat])
+                            const to = turf.point([point2.lng, point2.lat])
+                            const distance = turf.distance(from, to) * 1000 // 转换为米
+
+                            totalDistance += distance
+
+                            // 绘制线条
+                            const line = L.polyline(
+                                [
+                                    [point1.lat, point1.lng],
+                                    [point2.lat, point2.lng],
+                                ],
+                                {
+                                    color: '#409eff',
+                                    weight: 3,
+                                    opacity: 0.8,
+                                    dashArray: '5, 5',
+                                }
+                            ).addTo(this.map)
+
+                            // 在线条中间添加距离标签
+                            const midLat = (point1.lat + point2.lat) / 2
+                            const midLng = (point1.lng + point2.lng) / 2
+
+                            const distanceLabel = L.divIcon({
+                                className: 'distance-label',
+                                html: `<div style="
+                                    background: white;
+                                    border: 2px solid #409eff;
+                                    border-radius: 4px;
+                                    padding: 2px 6px;
+                                    font-size: 11px;
+                                    font-weight: bold;
+                                    color: #409eff;
+                                    white-space: nowrap;
+                                    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+                                    display: inline-block;
+                                ">${distance.toFixed(1)}m</div>`,
+                                iconSize: [1, 1],
+                                iconAnchor: [0, 0],
+                            })
+
+                            L.marker([midLat, midLng], { icon: distanceLabel }).addTo(this.map)
+
+                            this.distanceLines.push(line)
+                        }
+
+                        this.totalDistance = totalDistance
+                    },
+
+                    // 清除测距线条
+                    clearDistanceLines() {
+                        this.distanceLines.forEach((line) => {
+                            this.map.removeLayer(line)
+                        })
+                        this.distanceLines = []
+                    },
+
+                    // 清除测距
+                    clearDistance() {
+                        // 清除测距标记点
+                        this.distanceMarkers.forEach((marker) => {
+                            this.map.removeLayer(marker)
+                        })
+                        this.distanceMarkers = []
+
+                        // 清除测距线条
+                        this.clearDistanceLines()
+
+                        // 清除数据
+                        this.distancePoints = []
+                        this.totalDistance = 0
+                        this.isMeasuring = false
                     },
                 },
             })
