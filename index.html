@@ -272,6 +272,9 @@
                             >
                                 {{ isMeasuring ? '结束测距' : '开始测距' }}
                             </el-button>
+                            <el-button type="info" @click="createPolygon" :loading="polygonLoading">
+                                创建188m区域
+                            </el-button>
                         </div>
                         <!-- 测距结果显示 -->
                         <div v-if="isMeasuring || distancePoints.length > 0" class="distance-info">
@@ -355,6 +358,8 @@
                         totalDistance: 0, // 新增总距离
                         distanceMarkers: [], // 新增测距标记点
                         distanceLines: [], // 新增测距线条
+                        polygonLoading: false, // 新增多边形加载状态
+                        currentPolygon: null, // 新增当前多边形
                     }
                 },
                 mounted() {
@@ -383,6 +388,12 @@
 
                     // 清理测距资源
                     this.clearDistance()
+
+                    // 清理多边形资源
+                    if (this.currentPolygon) {
+                        this.map.removeLayer(this.currentPolygon)
+                        this.currentPolygon = null
+                    }
                 },
                 methods: {
                     // 初始化地图
@@ -1245,6 +1256,102 @@
                         this.distancePoints = []
                         this.totalDistance = 0
                         this.isMeasuring = false
+                    },
+
+                    // 创建188m多边形区域
+                    createPolygon() {
+                        const lng = parseFloat(this.form.lng)
+                        const lat = parseFloat(this.form.lat)
+
+                        if (isNaN(lng) || isNaN(lat)) {
+                            this.$message.error('请先选择有效的坐标位置')
+                            return
+                        }
+
+                        this.polygonLoading = true
+
+                        try {
+                            // 清除之前的多边形
+                            if (this.currentPolygon) {
+                                this.map.removeLayer(this.currentPolygon)
+                                this.currentPolygon = null
+                            }
+
+                            // 计算188m正方形区域的四个角点坐标
+                            const polygonCoords = this.calculatePolygonCoordinates(lng, lat, 188)
+
+                            // 创建多边形
+                            this.currentPolygon = L.polygon(polygonCoords, {
+                                fillColor: '#409eff',
+                                color: '#409eff',
+                                weight: 1,
+                                opacity: 1,
+                                fillOpacity: 0.2, // 透明蓝色背景
+                            }).addTo(this.map)
+
+                            // 添加多边形信息弹窗
+                            this.currentPolygon.bindPopup(`
+                                <div style="text-align: center;">
+                                    <strong>188m × 188m 区域</strong><br>
+                                    中心点: ${lng.toFixed(6)}, ${lat.toFixed(6)}<br>
+                                    尺寸: 188m × 188m
+                                </div>
+                            `)
+
+                            this.polygonLoading = false
+                            this.$message({
+                                message: `已创建188m区域，中心点：${lng.toFixed(6)}, ${lat.toFixed(6)}`,
+                                type: 'success',
+                                duration: 3000,
+                            })
+                        } catch (error) {
+                            this.polygonLoading = false
+                            console.error('创建多边形失败:', error)
+                            this.$message.error('创建多边形失败，请检查坐标是否有效')
+                        }
+                    },
+
+                    // 计算多边形坐标
+                    calculatePolygonCoordinates(centerLng, centerLat, sizeInMeters) {
+                        // 将米转换为度（近似计算）
+                        // 1度纬度约等于111,320米
+                        // 1度经度约等于111,320 * cos(纬度)米
+                        const latDegreePerMeter = 1 / 111320
+                        const lngDegreePerMeter = 1 / (111320 * Math.cos((centerLat * Math.PI) / 180))
+
+                        // 计算正方形区域的半边长（米转度）
+                        const halfSizeInDegrees = sizeInMeters / 2
+
+                        // 计算四个角点的坐标
+                        const coordinates = [
+                            // 左上角
+                            [
+                                centerLat + halfSizeInDegrees * latDegreePerMeter,
+                                centerLng - halfSizeInDegrees * lngDegreePerMeter,
+                            ],
+                            // 右上角
+                            [
+                                centerLat + halfSizeInDegrees * latDegreePerMeter,
+                                centerLng + halfSizeInDegrees * lngDegreePerMeter,
+                            ],
+                            // 右下角
+                            [
+                                centerLat - halfSizeInDegrees * latDegreePerMeter,
+                                centerLng + halfSizeInDegrees * lngDegreePerMeter,
+                            ],
+                            // 左下角
+                            [
+                                centerLat - halfSizeInDegrees * latDegreePerMeter,
+                                centerLng - halfSizeInDegrees * lngDegreePerMeter,
+                            ],
+                            // 闭合多边形
+                            [
+                                centerLat + halfSizeInDegrees * latDegreePerMeter,
+                                centerLng - halfSizeInDegrees * lngDegreePerMeter,
+                            ],
+                        ]
+
+                        return coordinates
                     },
                 },
             })
