@@ -361,6 +361,8 @@
                         distanceLabels: [], // 新增距离标签
                         polygonLoading: false, // 新增多边形加载状态
                         currentPolygon: null, // 新增当前多边形
+                        mouseFollowLine: null, // 新增鼠标跟随线条
+                        mouseFollowLabel: null, // 新增鼠标跟随标签
                     }
                 },
                 mounted() {
@@ -389,6 +391,9 @@
 
                     // 清理测距资源
                     this.clearDistance()
+
+                    // 清理鼠标跟随元素
+                    this.clearMouseFollowElements()
 
                     // 清理多边形资源
                     if (this.currentPolygon) {
@@ -504,6 +509,9 @@
 
                         // 监听地图视图变化事件
                         this.map.on('viewreset', this.updateModelsPosition)
+
+                        // 监听鼠标移动事件，用于测距预览
+                        this.map.on('mousemove', this.handleMouseMove)
                     },
 
                     // 初始化Three.js
@@ -1176,6 +1184,9 @@
                         // 清除之前的线条
                         this.clearDistanceLines()
 
+                        // 清除鼠标跟随元素
+                        this.clearMouseFollowElements()
+
                         let totalDistance = 0
 
                         // 计算所有点之间的距离
@@ -1260,10 +1271,81 @@
                         })
                         this.distanceLabels = []
 
+                        // 清除鼠标跟随元素
+                        this.clearMouseFollowElements()
+
                         // 清除数据
                         this.distancePoints = []
                         this.totalDistance = 0
                         this.isMeasuring = false
+                    },
+
+                    // 处理鼠标移动
+                    handleMouseMove(e) {
+                        if (!this.isMeasuring || this.distancePoints.length === 0) {
+                            return
+                        }
+
+                        const mouseLat = e.latlng.lat
+                        const mouseLng = e.latlng.lng
+                        const lastPoint = this.distancePoints[this.distancePoints.length - 1]
+
+                        // 清除之前的鼠标跟随元素
+                        this.clearMouseFollowElements()
+
+                        // 创建鼠标跟随线条
+                        this.mouseFollowLine = L.polyline(
+                            [
+                                [lastPoint.lat, lastPoint.lng],
+                                [mouseLat, mouseLng],
+                            ],
+                            {
+                                color: '#409eff',
+                                weight: 2,
+                                opacity: 0.6,
+                                dashArray: '5, 5',
+                            }
+                        ).addTo(this.map)
+
+                        // 计算预览距离
+                        const from = turf.point([lastPoint.lng, lastPoint.lat])
+                        const to = turf.point([mouseLng, mouseLat])
+                        const distance = turf.distance(from, to) * 1000 // 转换为米
+
+                        // 创建预览距离标签
+                        const midLat = (lastPoint.lat + mouseLat) / 2
+                        const midLng = (lastPoint.lng + mouseLng) / 2
+
+                        const previewLabel = L.divIcon({
+                            className: 'distance-preview-label',
+                            html: `<div style="
+                                background: rgba(64, 158, 255, 0.9);
+                                color: white;
+                                border-radius: 4px;
+                                padding: 2px 6px;
+                                font-size: 11px;
+                                font-weight: bold;
+                                white-space: nowrap;
+                                box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+                                display: inline-block;
+                            ">${distance.toFixed(1)}m</div>`,
+                            iconSize: [1, 1],
+                            iconAnchor: [0, 0],
+                        })
+
+                        this.mouseFollowLabel = L.marker([midLat, midLng], { icon: previewLabel }).addTo(this.map)
+                    },
+
+                    // 清除鼠标跟随元素
+                    clearMouseFollowElements() {
+                        if (this.mouseFollowLine) {
+                            this.map.removeLayer(this.mouseFollowLine)
+                            this.mouseFollowLine = null
+                        }
+                        if (this.mouseFollowLabel) {
+                            this.map.removeLayer(this.mouseFollowLabel)
+                            this.mouseFollowLabel = null
+                        }
                     },
 
                     // 创建188m多边形区域
