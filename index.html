@@ -861,11 +861,14 @@
                                     // 添加标记点
                                     this.addMarker(lng, lat)
 
-                                    this.$message({
-                                        message: `已定位到：${result.display_name}`,
-                                        type: 'success',
-                                        duration: 3000,
-                                    })
+                                    const timer = setTimeout(() => {
+                                        clearTimeout(timer)
+                                        this.$message({
+                                            message: `已定位到：${result.display_name}`,
+                                            type: 'success',
+                                            duration: 3000,
+                                        })
+                                    }, 800)
                                 } else {
                                     this.$message.error('未找到该地址，请检查地址是否正确')
                                 }
