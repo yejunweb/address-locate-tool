@@ -1,0 +1,1045 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>地图定位工具</title>
+        <!-- 引入Vue -->
+        <script src="https://unpkg.com/vue@2/dist/vue.js"></script>
+        <!-- 引入Element UI -->
+        <link rel="stylesheet" href="https://unpkg.com/element-ui/lib/theme-chalk/index.css" />
+        <script src="https://unpkg.com/element-ui/lib/index.js"></script>
+        <!-- 引入Leaflet CSS -->
+        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+        <!-- 引入Leaflet JS -->
+        <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+        <!-- 引入Three.js -->
+        <script src="https://unpkg.com/three@0.138.0/build/three.min.js"></script>
+        <!-- 引入Turf.js用于精确的地理计算 -->
+        <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+        <script>
+            // 确保Three.js加载完成后再加载其他模块
+            window.addEventListener('load', function () {
+                // 动态加载GLTFLoader
+                const script1 = document.createElement('script')
+                script1.src = 'https://unpkg.com/three@0.138.0/examples/js/loaders/GLTFLoader.js'
+                script1.onload = function () {
+                    // GLTFLoader加载完成
+                    console.log('GLTFLoader loaded')
+                    // 将GLTFLoader添加到全局变量
+                    if (typeof THREE !== 'undefined' && window.GLTFLoader) {
+                        THREE.GLTFLoader = window.GLTFLoader
+                    }
+                }
+                document.head.appendChild(script1)
+
+                // 动态加载OrbitControls
+                const script2 = document.createElement('script')
+                script2.src = 'https://unpkg.com/three@0.138.0/examples/js/controls/OrbitControls.js'
+                script2.onload = function () {
+                    // OrbitControls加载完成
+                    console.log('OrbitControls loaded')
+                    // 将OrbitControls添加到全局变量
+                    if (typeof THREE !== 'undefined' && window.OrbitControls) {
+                        THREE.OrbitControls = window.OrbitControls
+                    }
+                }
+                document.head.appendChild(script2)
+            })
+        </script>
+        <style>
+            body {
+                margin: 0;
+                padding: 0;
+                font-family: 'Helvetica Neue', Helvetica, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
+                    '微软雅黑', Arial, sans-serif;
+            }
+
+            .container {
+                position: relative;
+                width: 100vw;
+                height: 100vh;
+            }
+
+            .control-panel {
+                position: absolute;
+                top: 20px;
+                left: 20px;
+                z-index: 1000;
+                background: white;
+                padding: 20px;
+                border-radius: 8px;
+                box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
+                min-width: 200px;
+            }
+
+            .control-panel .el-form-item {
+                margin-bottom: 15px;
+            }
+
+            #map-container {
+                width: 100%;
+                height: 100%;
+                position: relative;
+                z-index: 1;
+                pointer-events: auto;
+            }
+
+            .operate-group {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+            }
+
+            .operate-group > button {
+                width: 100%;
+                margin-left: 0 !important;
+            }
+
+            .operate-group > button + button {
+                margin-top: 12px;
+            }
+
+            .info-text {
+                font-size: 12px;
+                color: #909399;
+                margin-top: 16px;
+                line-height: 1.5;
+            }
+
+            .info-text > p {
+                margin: 0;
+                line-height: 1;
+            }
+
+            .info-text > p + p {
+                margin-top: 12px;
+            }
+
+            /* Leaflet地图样式覆盖 */
+            .leaflet-container {
+                font-family: inherit;
+            }
+
+            /* 3D模型容器 */
+            #model-container {
+                position: absolute;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                pointer-events: none;
+                z-index: 500;
+                background: transparent;
+                user-select: none;
+            }
+
+            #model-container canvas {
+                pointer-events: none;
+                position: absolute;
+                top: 0;
+                left: 0;
+                width: 100% !important;
+                height: 100% !important;
+                background: transparent !important;
+                user-select: none;
+            }
+
+            .model-controls {
+                position: absolute;
+                top: 20px;
+                right: 20px;
+                z-index: 1000;
+                background: white;
+                padding: 15px;
+                border-radius: 8px;
+                box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
+                min-width: 200px;
+            }
+
+            .model-controls > h4 {
+                line-height: 1;
+                margin-bottom: 15px;
+                margin-block-start: 0;
+                margin-block-end: 0;
+            }
+
+            /* 缩放级别控件样式 */
+            .leaflet-control-zoomlevel {
+                margin-bottom: 10px;
+            }
+
+            .leaflet-control-zoomlevel > div {
+                box-shadow: 0 1px 5px rgba(0, 0, 0, 0.4);
+                background: white;
+                border-radius: 4px;
+                padding: 5px 10px;
+                font-size: 12px;
+                font-weight: bold;
+                color: #333;
+                min-width: 40px;
+                text-align: center;
+                border: 2px solid rgba(0, 0, 0, 0.2);
+            }
+        </style>
+    </head>
+    <body>
+        <div id="app">
+            <div class="container">
+                <!-- 控制面板 -->
+                <div class="control-panel">
+                    <el-form :model="form" label-width="60px" label-position="left" size="small">
+                        <el-form-item label="经度：">
+                            <el-input
+                                v-model="form.lng"
+                                placeholder="请输入经度"
+                                @keyup.enter.native="locateToCoordinates"
+                            >
+                            </el-input>
+                        </el-form-item>
+                        <el-form-item label="纬度：">
+                            <el-input
+                                v-model="form.lat"
+                                placeholder="请输入纬度"
+                                @keyup.enter.native="locateToCoordinates"
+                            >
+                            </el-input>
+                        </el-form-item>
+                        <el-form-item label="地址：">
+                            <el-input
+                                v-model="form.address"
+                                placeholder="请输入地址进行搜索"
+                                @keyup.enter.native="searchAddress"
+                            >
+                                <el-button
+                                    slot="append"
+                                    icon="el-icon-search"
+                                    @click="searchAddress"
+                                    :loading="addressLoading"
+                                ></el-button>
+                            </el-input>
+                        </el-form-item>
+                        <div class="operate-group">
+                            <el-button type="primary" @click="locateToCoordinates" :loading="loading">
+                                定位到坐标
+                            </el-button>
+                            <el-button type="success" @click="loadModelAtCurrentPosition" :loading="modelLoading">
+                                加载3D模型
+                            </el-button>
+                        </div>
+                    </el-form>
+                    <div class="info-text">
+                        <p>💡 提示：</p>
+                        <p>• 输入地址后点击搜索按钮或按回车键进行地址搜索</p>
+                        <p>• 点击"定位到坐标"按钮可直接定位到指定经纬度</p>
+                        <p>• 单击地图任意位置可添加标记点并自动更新坐标</p>
+                        <p>• 支持回车键快速定位</p>
+                        <p>• 点击"加载3D模型"在当前坐标加载GLB模型</p>
+                        <p>• 当前使用OpenStreetMap（免费开源地图）</p>
+                    </div>
+                </div>
+
+                <!-- 3D模型控制面板 -->
+                <div class="model-controls" v-if="models.length > 0">
+                    <h4>3D模型列表</h4>
+                    <div v-for="(model, index) in models" :key="index" style="margin-bottom: 10px">
+                        <p>模型 {{index + 1}}: {{model.lat.toFixed(6)}}, {{model.lng.toFixed(6)}}</p>
+                        <el-button size="mini" type="danger" @click="removeModel(index)">删除</el-button>
+                    </div>
+                    <el-button size="small" type="warning" @click="clearAllModels">清除所有模型</el-button>
+                </div>
+
+                <!-- 地图容器 -->
+                <div id="map-container"></div>
+
+                <!-- 3D模型容器 -->
+                <div id="model-container"></div>
+            </div>
+        </div>
+
+        <script>
+            new Vue({
+                el: '#app',
+                data() {
+                    return {
+                        form: {
+                            lng: '101.6869',
+                            lat: '3.1390',
+                            address: '', // 添加地址字段
+                        },
+                        loading: false,
+                        modelLoading: false,
+                        addressLoading: false, // 添加地址搜索加载状态
+                        map: null,
+                        markers: [],
+                        isDragging: false,
+                        lastClickTime: 0,
+                        glbTemUrl: '/basicTemplate.glb',
+                        // glbTemUrl:
+                        //     'https://shanghai-house-model.oss-accelerate.aliyuncs.com/glb/%E5%BA%95%E5%9B%BE%E6%A8%A1%E7%89%88/f7bd1a90-33b7-42a0-acbe-966c6d70d7fe.glb?v=1754621712839',
+                        // Three.js相关
+                        scene: null,
+                        camera: null,
+                        renderer: null,
+                        controls: null,
+                        models: [],
+                        modelMeshes: [],
+                        loader: null,
+                        checkTimer: null, // 添加定时器引用
+                        baseLayers: {}, // 添加图层组引用
+                        pixelToThreeJSRatio: 1, // 1像素 = 1Three.js单位
+                        meterToPixelRatio: 1, // 1米 = 多少像素
+                    }
+                },
+                mounted() {
+                    this.initMap()
+                    this.initThreeJS()
+                },
+                beforeDestroy() {
+                    // 清理定时器
+                    if (this.checkTimer) {
+                        clearTimeout(this.checkTimer)
+                        this.checkTimer = null
+                    }
+
+                    // 清理Three.js资源
+                    if (this.renderer) {
+                        this.renderer.dispose()
+                    }
+                    if (this.scene) {
+                        this.scene.clear()
+                    }
+
+                    // 清理地图
+                    if (this.map) {
+                        this.map.remove()
+                    }
+                },
+                methods: {
+                    // 初始化地图
+                    initMap() {
+                        // 创建Leaflet地图实例
+                        this.map = L.map('map-container', {
+                            zoomControl: false, // 禁用默认的缩放控件
+                        }).setView([parseFloat(this.form.lat), parseFloat(this.form.lng)], 12)
+
+                        // 添加比例尺控件
+                        L.control
+                            .scale({
+                                position: 'bottomleft',
+                                maxWidth: 200,
+                                metric: true,
+                                imperial: false,
+                                updateWhenIdle: true,
+                            })
+                            .addTo(this.map)
+
+                        // 创建图层组
+                        this.baseLayers = {
+                            OpenStreetMap: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                                attribution: '© OpenStreetMap contributors',
+                                maxZoom: 19,
+                            }),
+                            卫星影像: L.tileLayer(
+                                'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+                                {
+                                    attribution: '© Esri',
+                                    maxZoom: 19,
+                                }
+                            ),
+                            地形图: L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+                                attribution: '© OpenTopoMap',
+                                maxZoom: 17,
+                            }),
+                            街道图: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                                attribution: '© OpenStreetMap contributors',
+                                maxZoom: 19,
+                            }),
+                        }
+
+                        // 添加图层控件
+                        L.control
+                            .layers(this.baseLayers, null, {
+                                position: 'topright',
+                                collapsed: false,
+                            })
+                            .addTo(this.map)
+
+                        // 添加缩放层级控件
+                        L.control
+                            .zoom({
+                                position: 'bottomright',
+                                zoomInTitle: '放大',
+                                zoomOutTitle: '缩小',
+                            })
+                            .addTo(this.map)
+
+                        // 添加缩放级别显示控件
+                        L.Control.ZoomLevel = L.Control.extend({
+                            onAdd: function (map) {
+                                const container = L.DomUtil.create('div', 'leaflet-control-zoomlevel')
+                                container.innerHTML = `
+                                    <div style="
+                                        background: white;
+                                        padding: 5px 10px;
+                                        border: 2px solid rgba(0,0,0,0.2);
+                                        border-radius: 4px;
+                                        font-size: 12px;
+                                        font-weight: bold;
+                                        color: #333;
+                                        min-width: 40px;
+                                        text-align: center;
+                                    ">
+                                        层级：<span id="zoom-level">${map.getZoom()}</span>
+                                    </div>
+                                `
+
+                                // 监听缩放事件
+                                map.on('zoomend', function () {
+                                    document.getElementById('zoom-level').textContent = map.getZoom()
+                                })
+
+                                return container
+                            },
+                        })
+
+                        // 添加缩放级别控件到地图
+                        new L.Control.ZoomLevel({
+                            position: 'bottomright',
+                        }).addTo(this.map)
+
+                        // 默认显示OpenStreetMap图层
+                        this.baseLayers['OpenStreetMap'].addTo(this.map)
+
+                        // 监听地图点击事件
+                        this.map.on('click', this.handleMapClick)
+
+                        // 监听地图拖拽事件
+                        this.map.on('dragstart', this.handleDragStart)
+                        this.map.on('dragend', this.handleDragEnd)
+
+                        // 监听地图缩放和移动事件，更新3D模型位置
+                        this.map.on('zoomend moveend', this.updateModelsPosition)
+
+                        // 监听地图视图变化事件
+                        this.map.on('viewreset', this.updateModelsPosition)
+                    },
+
+                    // 初始化Three.js
+                    initThreeJS() {
+                        // 等待Three.js模块加载完成
+                        let checkCount = 0
+                        const maxChecks = 50 // 最大检查次数（10秒）
+                        let checkTimer = null
+
+                        const checkModules = () => {
+                            checkCount++
+
+                            // 超时检查
+                            if (checkCount > maxChecks) {
+                                console.error('Three.js模块加载超时')
+                                this.$message.error('3D引擎加载超时，请刷新页面重试')
+                                return
+                            }
+
+                            if (typeof THREE !== 'undefined') {
+                                // 检查GLTFLoader和OrbitControls是否可用
+                                let gltfLoaderAvailable = false
+                                let orbitControlsAvailable = false
+
+                                // 检查GLTFLoader
+                                if (typeof THREE.GLTFLoader !== 'undefined') {
+                                    gltfLoaderAvailable = true
+                                } else if (typeof window.GLTFLoader !== 'undefined') {
+                                    THREE.GLTFLoader = window.GLTFLoader
+                                    gltfLoaderAvailable = true
+                                } else {
+                                    // 尝试从全局变量中查找
+                                    if (window.THREE && window.THREE.GLTFLoader) {
+                                        THREE.GLTFLoader = window.THREE.GLTFLoader
+                                        gltfLoaderAvailable = true
+                                    }
+                                }
+
+                                // 检查OrbitControls
+                                if (typeof THREE.OrbitControls !== 'undefined') {
+                                    orbitControlsAvailable = true
+                                } else if (typeof window.OrbitControls !== 'undefined') {
+                                    THREE.OrbitControls = window.OrbitControls
+                                    orbitControlsAvailable = true
+                                } else {
+                                    // 尝试从全局变量中查找
+                                    if (window.THREE && window.THREE.OrbitControls) {
+                                        THREE.OrbitControls = window.THREE.OrbitControls
+                                        orbitControlsAvailable = true
+                                    }
+                                }
+
+                                if (gltfLoaderAvailable) {
+                                    // 清理定时器
+                                    if (checkTimer) {
+                                        clearTimeout(checkTimer)
+                                        checkTimer = null
+                                    }
+                                    console.log('Three.js模块加载完成')
+                                    this.setupThreeJS()
+                                } else {
+                                    // 继续检查
+                                    checkTimer = setTimeout(checkModules, 200)
+                                }
+                            } else {
+                                // 继续检查
+                                checkTimer = setTimeout(checkModules, 200)
+                            }
+                        }
+
+                        // 开始检查
+                        checkModules()
+
+                        // 保存定时器引用，以便在组件销毁时清理
+                        this.checkTimer = checkTimer
+                    },
+
+                    // 设置Three.js
+                    setupThreeJS() {
+                        // 检查THREE对象是否可用
+                        if (typeof THREE === 'undefined') {
+                            console.error('THREE.js not loaded yet')
+                            return
+                        }
+
+                        const container = document.getElementById('model-container')
+
+                        // 创建场景
+                        this.scene = new THREE.Scene()
+                        // 设置场景背景为透明
+                        this.scene.background = null
+                        this.scene.fog = null // 移除雾效
+
+                        // 创建相机
+                        this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000)
+                        this.camera.position.set(0, 10, 10)
+
+                        // 创建渲染器 - 确保透明背景
+                        this.renderer = new THREE.WebGLRenderer({
+                            alpha: true,
+                            antialias: true,
+                            preserveDrawingBuffer: false,
+                            premultipliedAlpha: false,
+                        })
+                        this.renderer.setSize(window.innerWidth, window.innerHeight)
+                        this.renderer.setClearColor(0x000000, 0) // 设置透明背景
+                        this.renderer.outputEncoding = THREE.sRGBEncoding
+                        this.renderer.autoClear = false // 禁用自动清除
+                        this.renderer.sortObjects = false // 禁用对象排序
+                        this.renderer.setViewport(0, 0, window.innerWidth, window.innerHeight)
+                        container.appendChild(this.renderer.domElement)
+
+                        // 创建控制器 - 禁用OrbitControls，因为我们要与地图绑定
+                        // this.controls = new THREE.OrbitControls(this.camera, this.renderer.domElement)
+                        // this.controls.enableDamping = true
+                        // this.controls.dampingFactor = 0.05
+
+                        // 创建GLTF加载器
+                        try {
+                            if (typeof THREE.GLTFLoader !== 'undefined') {
+                                this.loader = new THREE.GLTFLoader()
+                            } else if (typeof window.GLTFLoader !== 'undefined') {
+                                this.loader = new window.GLTFLoader()
+                            } else {
+                                console.error('GLTFLoader not available')
+                                this.loader = null
+                            }
+                        } catch (error) {
+                            console.error('Failed to create GLTFLoader:', error)
+                            this.loader = null
+                        }
+
+                        // 添加光源
+                        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6)
+                        this.scene.add(ambientLight)
+
+                        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8)
+                        directionalLight.position.set(10, 10, 5)
+                        this.scene.add(directionalLight)
+
+                        // 开始渲染循环
+                        this.animate()
+
+                        // 监听窗口大小变化
+                        window.addEventListener('resize', this.onWindowResize)
+                    },
+
+                    // 渲染循环
+                    animate() {
+                        if (this.scene && this.camera && this.renderer) {
+                            requestAnimationFrame(this.animate)
+                            // 更新相机位置以匹配地图
+                            this.updateCameraToMap()
+                            // 清除背景并渲染
+                            this.renderer.clear(true, true, false) // 清除颜色和深度缓冲，不清除模板缓冲
+                            this.renderer.render(this.scene, this.camera)
+                        }
+                    },
+
+                    // 更新相机位置以匹配地图
+                    updateCameraToMap() {
+                        if (!this.map || !this.camera) return
+
+                        const center = this.map.getCenter()
+                        const zoom = this.map.getZoom()
+                        const bounds = this.map.getBounds()
+
+                        // 计算地图的像素尺寸
+                        const mapSize = this.map.getSize()
+
+                        // 使用Leaflet内置方法计算1米对应的像素距离
+                        const centerPoint = this.map.latLngToContainerPoint(center)
+                        const southPoint = this.map.latLngToContainerPoint([
+                            center.lat - 0.00001, // 向南移动一小段距离
+                            center.lng,
+                        ])
+                        const pixelDistance1Meter = Math.abs(southPoint.y - centerPoint.y) * 100000 // 转换为1米对应的像素
+
+                        // 设置相机位置和视角
+                        const aspect = window.innerWidth / window.innerHeight
+                        const fov = 75
+                        const distance =
+                            (Math.max(mapSize.x, mapSize.y) / (2 * Math.tan((fov * Math.PI) / 180 / 2))) * 0.5
+
+                        this.camera.position.set(0, distance, 0)
+                        this.camera.lookAt(0, 0, 0)
+                        this.camera.fov = fov
+                        this.camera.aspect = aspect
+                        this.camera.updateProjectionMatrix()
+
+                        // 保存像素到Three.js的比例关系
+                        this.pixelToThreeJSRatio = 1 // 1像素 = 1Three.js单位
+                        this.meterToPixelRatio = pixelDistance1Meter // 1米 = 多少像素
+                    },
+
+                    // 将经纬度转换为Three.js坐标（与地图绑定）
+                    latLngToThreeJSPosition(lng, lat) {
+                        // 检查THREE对象是否可用
+                        if (typeof THREE === 'undefined') {
+                            console.error('THREE.js not loaded yet')
+                            return { x: 0, y: 0, z: 0 }
+                        }
+
+                        if (!this.map) {
+                            return new THREE.Vector3(0, 0, 0)
+                        }
+
+                        // 获取地图中心点
+                        const center = this.map.getCenter()
+
+                        // 使用Leaflet内置方法将经纬度转换为像素坐标
+                        const point = this.map.latLngToContainerPoint([lat, lng])
+                        const centerPoint = this.map.latLngToContainerPoint([center.lat, center.lng])
+
+                        // 计算相对于地图中心的像素偏移
+                        const offsetX = point.x - centerPoint.x
+                        const offsetY = point.y - centerPoint.y
+
+                        // 转换为Three.js坐标系统
+                        // 使用像素坐标直接映射到Three.js坐标，确保1像素=1Three.js单位
+                        const x = offsetX
+                        const z = -offsetY // 注意z轴方向
+                        const y = 0 // 地面高度
+
+                        return new THREE.Vector3(x, y, z)
+                    },
+
+                    // 计算地图上1米对应的Three.js坐标单位
+                    calculateMeterToThreeJSUnit() {
+                        if (!this.map) return 1
+
+                        const center = this.map.getCenter()
+
+                        // 使用Leaflet内置方法计算1米对应的像素距离
+                        const centerPoint = this.map.latLngToContainerPoint(center)
+
+                        // 向南1米的点（使用经纬度偏移）
+                        const southLat = center.lat - 1 / 111320 // 大约1米对应的纬度变化
+                        const southPoint = this.map.latLngToContainerPoint([southLat, center.lng])
+                        const pixelDistance1Meter = Math.abs(southPoint.y - centerPoint.y)
+
+                        // 防止返回0或无效值
+                        if (pixelDistance1Meter <= 0 || isNaN(pixelDistance1Meter)) {
+                            console.warn('Invalid pixel distance for 1 meter, using default value')
+                            return 1
+                        }
+
+                        // 由于1像素=1Three.js单位，所以1米对应的Three.js单位就是像素距离
+                        return pixelDistance1Meter
+                    },
+
+                    // 基于真实地理距离计算模型缩放
+                    calculateScaleFromRealDistance(lng, lat) {
+                        if (!this.map) return 1
+
+                        const center = this.map.getCenter()
+
+                        // 使用Leaflet内置方法计算距离
+                        const modelPoint = this.map.latLngToContainerPoint([lat, lng])
+                        const centerPoint = this.map.latLngToContainerPoint([center.lat, center.lng])
+
+                        // 计算像素距离
+                        const pixelDistance = Math.sqrt(
+                            Math.pow(modelPoint.x - centerPoint.x, 2) + Math.pow(modelPoint.y - centerPoint.y, 2)
+                        )
+
+                        // 转换为米（使用1米对应的像素距离）
+                        const meterToPixel = this.calculateMeterToThreeJSUnit()
+
+                        // 防止除零错误
+                        let distanceFromCenter = 0
+                        if (meterToPixel > 0 && !isNaN(meterToPixel)) {
+                            distanceFromCenter = pixelDistance / meterToPixel
+                        } else {
+                            console.warn('Invalid meterToPixel value, using 0 for distanceFromCenter')
+                            distanceFromCenter = 0
+                        }
+
+                        // 获取1米对应的Three.js单位
+                        const meterToUnit = this.calculateMeterToThreeJSUnit()
+
+                        // 基础缩放因子（根据地图缩放级别）
+                        const zoom = this.map.getZoom()
+                        const baseScale = Math.pow(2, zoom - 10) * 0.5
+
+                        // 距离因子：距离中心越远，缩放越小
+                        const maxDistance = 1000 // 最大距离阈值（米）
+                        const distanceFactor = Math.exp(-distanceFromCenter / maxDistance)
+
+                        // 确保最小缩放比例
+                        const minScale = 0.01
+                        const finalScale = Math.max(minScale, baseScale * distanceFactor * meterToUnit)
+                        return finalScale
+                    },
+                    // 更新所有模型的位置（当地图移动或缩放时）
+                    updateModelsPosition() {
+                        if (!this.models.length) return
+
+                        this.models.forEach((modelInfo, index) => {
+                            const newPosition = this.latLngToThreeJSPosition(modelInfo.lng, modelInfo.lat)
+                            if (modelInfo.model) {
+                                // 更新位置
+                                modelInfo.model.position.copy(newPosition)
+
+                                // 基于经纬度中心点更新大小
+                                if (modelInfo.originalScale) {
+                                    const newScale =
+                                        this.calculateScaleFromRealDistance(modelInfo.lng, modelInfo.lat) *
+                                        modelInfo.originalScale
+                                    modelInfo.model.scale.setScalar(newScale)
+                                }
+                            }
+                        })
+                    },
+
+                    // 搜索地址并自动定位
+                    searchAddress() {
+                        if (!this.form.address.trim()) {
+                            this.$message.warning('请输入要搜索的地址')
+                            return
+                        }
+
+                        this.addressLoading = true
+
+                        // 使用Nominatim地理编码服务
+                        const searchUrl = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
+                            this.form.address
+                        )}&limit=1`
+
+                        fetch(searchUrl)
+                            .then((response) => response.json())
+                            .then((data) => {
+                                this.addressLoading = false
+
+                                if (data && data.length > 0) {
+                                    const result = data[0]
+                                    const lat = parseFloat(result.lat)
+                                    const lng = parseFloat(result.lon)
+
+                                    // 更新表单中的坐标
+                                    this.form.lat = lat.toFixed(6)
+                                    this.form.lng = lng.toFixed(6)
+
+                                    // 定位到搜索到的位置
+                                    this.map.setView([lat, lng], 17)
+
+                                    // 添加标记点
+                                    this.addMarker(lng, lat)
+
+                                    this.$message({
+                                        message: `已定位到：${result.display_name}`,
+                                        type: 'success',
+                                        duration: 3000,
+                                    })
+                                } else {
+                                    this.$message.error('未找到该地址，请检查地址是否正确')
+                                }
+                            })
+                            .catch((error) => {
+                                this.addressLoading = false
+                                console.error('地址搜索失败:', error)
+                                this.$message.error('地址搜索失败，请检查网络连接')
+                            })
+                    },
+
+                    // 修正坐标范围
+                    normalizeCoordinate(lng, lat) {
+                        // 处理经度范围
+                        let normalizedLng = lng
+                        while (normalizedLng < -180) {
+                            normalizedLng += 360
+                        }
+                        while (normalizedLng > 180) {
+                            normalizedLng -= 360
+                        }
+
+                        // 处理纬度范围
+                        let normalizedLat = lat
+                        if (normalizedLat < -90) {
+                            normalizedLat = -90
+                        }
+                        if (normalizedLat > 90) {
+                            normalizedLat = 90
+                        }
+
+                        return { lng: normalizedLng, lat: normalizedLat }
+                    },
+
+                    // 处理地图点击事件
+                    handleMapClick(e) {
+                        console.log('点击事件对象:', e)
+                        console.log('原始坐标:', e.latlng)
+                        console.log('地图中心:', this.map.getCenter())
+                        console.log('地图缩放级别:', this.map.getZoom())
+                        console.log('地图边界:', this.map.getBounds())
+
+                        // 检查是否为拖拽结束后的点击
+                        const now = Date.now()
+                        if (now - this.lastClickTime < 200) {
+                            return // 忽略拖拽结束后的点击
+                        }
+
+                        let lat = e.latlng.lat
+                        let lng = e.latlng.lng
+
+                        // 修正坐标范围
+                        const normalized = this.normalizeCoordinate(lng, lat)
+                        lng = normalized.lng
+                        lat = normalized.lat
+
+                        console.log('修正后的坐标:', { lng, lat })
+
+                        // 更新表单中的经纬度
+                        this.form.lng = lng.toFixed(6)
+                        this.form.lat = lat.toFixed(6)
+
+                        // 添加标记点
+                        this.addMarker(lng, lat)
+                    },
+
+                    // 处理拖拽开始
+                    handleDragStart() {
+                        this.isDragging = true
+                    },
+
+                    // 处理拖拽结束
+                    handleDragEnd() {
+                        this.isDragging = false
+                        this.lastClickTime = Date.now()
+                    },
+
+                    // 添加标记点
+                    addMarker(lng, lat) {
+                        // 清除之前的标记点
+                        this.clearMarkers()
+
+                        // 创建新的标记点
+                        const marker = L.marker([lat, lng]).addTo(this.map)
+
+                        // 添加弹出信息
+                        marker.bindPopup(`经度: ${lng.toFixed(6)}, 纬度: ${lat.toFixed(6)}`)
+
+                        // 将标记点添加到数组
+                        this.markers.push(marker)
+
+                        // 显示成功消息
+                        this.$message({
+                            message: `已添加标记点：经度 ${lng.toFixed(6)}，纬度 ${lat.toFixed(6)}`,
+                            type: 'success',
+                            duration: 2000,
+                        })
+                    },
+
+                    // 清除所有标记点
+                    clearMarkers() {
+                        this.markers.forEach((marker) => {
+                            this.map.removeLayer(marker)
+                        })
+                        this.markers = []
+                    },
+
+                    // 定位到指定坐标
+                    locateToCoordinates() {
+                        const lng = parseFloat(this.form.lng)
+                        const lat = parseFloat(this.form.lat)
+
+                        // 验证输入
+                        if (isNaN(lng) || isNaN(lat)) {
+                            this.$message.error('请输入有效的经纬度坐标')
+                            return
+                        }
+
+                        if (lng < -180 || lng > 180) {
+                            this.$message.error('经度范围应在 -180 到 180 之间')
+                            return
+                        }
+
+                        if (lat < -90 || lat > 90) {
+                            this.$message.error('纬度范围应在 -90 到 90 之间')
+                            return
+                        }
+
+                        this.loading = true
+
+                        // 设置地图中心点
+                        this.map.setView([lat, lng], 17)
+
+                        // 添加标记点
+                        this.addMarker(lng, lat)
+
+                        this.loading = false
+                    },
+
+                    // 在当前坐标加载3D模型
+                    loadModelAtCurrentPosition() {
+                        const lng = parseFloat(this.form.lng)
+                        const lat = parseFloat(this.form.lat)
+
+                        if (isNaN(lng) || isNaN(lat)) {
+                            this.$message.error('请先选择有效的坐标位置')
+                            return
+                        }
+
+                        this.loadModel(lng, lat)
+                    },
+
+                    // 加载3D模型
+                    loadModel(lng, lat) {
+                        // 检查THREE对象是否可用
+                        if (typeof THREE === 'undefined') {
+                            this.$message.error('3D引擎未加载完成，请稍后再试')
+                            return
+                        }
+
+                        // 检查loader是否可用
+                        if (!this.loader) {
+                            this.$message.error('3D模型加载器未初始化，请稍后再试')
+                            return
+                        }
+
+                        this.modelLoading = true
+
+                        // 将经纬度转换为Three.js坐标
+                        const position = this.latLngToThreeJSPosition(lng, lat)
+
+                        this.loader.load(
+                            this.glbTemUrl,
+                            (gltf) => {
+                                const model = gltf.scene
+
+                                // 设置模型位置
+                                model.position.copy(position)
+
+                                // 调整模型大小 - 基于真实地理距离
+                                const box = new THREE.Box3().setFromObject(model)
+                                const size = box.getSize(new THREE.Vector3())
+                                const maxDim = Math.max(size.x, size.y, size.z)
+
+                                // 基于真实地理距离计算缩放
+                                const scaleFactor = this.calculateScaleFromRealDistance(lng, lat)
+                                // 确保模型在scale=1时，1米对应1米
+                                const scale = scaleFactor / maxDim
+                                model.scale.setScalar(scale)
+
+                                // 添加到场景
+                                this.scene.add(model)
+
+                                // 保存模型信息，包括原始缩放比例
+                                this.models.push({
+                                    lng,
+                                    lat,
+                                    model,
+                                    originalScale: scale / scaleFactor, // 保存基础缩放比例
+                                })
+                                this.modelMeshes.push(model)
+
+                                this.modelLoading = false
+                                this.$message({
+                                    message: `3D模型已加载到坐标：${lng.toFixed(6)}, ${lat.toFixed(6)}`,
+                                    type: 'success',
+                                    duration: 2000,
+                                })
+                            },
+                            (progress) => {
+                                console.log('加载进度:', (progress.loaded / progress.total) * 100 + '%')
+                            },
+                            (error) => {
+                                console.error('加载模型失败:', error)
+                                this.modelLoading = false
+                                this.$message.error('加载3D模型失败，请检查网络连接或模型URL')
+                            }
+                        )
+                    },
+
+                    // 删除指定模型
+                    removeModel(index) {
+                        if (index >= 0 && index < this.models.length && this.scene) {
+                            const model = this.models[index].model
+                            this.scene.remove(model)
+                            this.models.splice(index, 1)
+                            this.modelMeshes.splice(index, 1)
+
+                            this.$message({
+                                message: '模型已删除',
+                                type: 'success',
+                                duration: 1500,
+                            })
+                        }
+                    },
+
+                    // 清除所有模型
+                    clearAllModels() {
+                        if (this.scene) {
+                            this.models.forEach((item) => {
+                                this.scene.remove(item.model)
+                            })
+                            this.models = []
+                            this.modelMeshes = []
+
+                            this.$message({
+                                message: '所有模型已清除',
+                                type: 'success',
+                                duration: 1500,
+                            })
+                        }
+                    },
+
+                    // 窗口大小变化处理
+                    onWindowResize() {
+                        if (this.camera && this.renderer) {
+                            this.camera.aspect = window.innerWidth / window.innerHeight
+                            this.camera.updateProjectionMatrix()
+                            this.renderer.setSize(window.innerWidth, window.innerHeight)
+                        }
+                    },
+                },
+            })
+        </script>
+    </body>
+</html>
