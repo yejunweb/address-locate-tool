@@ -358,6 +358,7 @@
                         totalDistance: 0, // 新增总距离
                         distanceMarkers: [], // 新增测距标记点
                         distanceLines: [], // 新增测距线条
+                        distanceLabels: [], // 新增距离标签
                         polygonLoading: false, // 新增多边形加载状态
                         currentPolygon: null, // 新增当前多边形
                     }
@@ -1225,7 +1226,8 @@
                                 iconAnchor: [0, 0],
                             })
 
-                            L.marker([midLat, midLng], { icon: distanceLabel }).addTo(this.map)
+                            const labelMarker = L.marker([midLat, midLng], { icon: distanceLabel }).addTo(this.map)
+                            this.distanceLabels.push(labelMarker)
 
                             this.distanceLines.push(line)
                         }
@@ -1251,6 +1253,12 @@
 
                         // 清除测距线条
                         this.clearDistanceLines()
+
+                        // 清除距离标签
+                        this.distanceLabels.forEach((label) => {
+                            this.map.removeLayer(label)
+                        })
+                        this.distanceLabels = []
 
                         // 清除数据
                         this.distancePoints = []
